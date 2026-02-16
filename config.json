@@ -23,6 +23,14 @@
       "default_mode": "auto",
       "max_iterations": 10,
       "default_attempts": 1
+    },
+    "ats-project-runner": {
+      "channel": "ats-project-runner",
+      "repo": "/home/openclaw/projects/ats-project-runner",
+      "github": "difflabai/ats-project-runner",
+      "default_mode": "auto",
+      "max_iterations": 12,
+      "default_attempts": 1
     }
   },
   "claude_bin": "/usr/bin/claude",
