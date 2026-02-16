@@ -355,9 +355,11 @@ async function processTask(task, project, projectName, runNumber, modeOverride, 
         let prompt;
 
         if (i === 0) {
-          prompt = `You are working on the project at ${repoPath}. Execute this task:\n\n${title}\n${description}${prevContext}\n\nMake progress on this task. Do NOT commit, push, or create PRs.`;
+          prompt = `You are working on the project at ${repoPath}. Execute this task:\n\n${title}\n${description}${prevContext}\n\nThis is iteration 1 of ${iterations}. Make progress on this task. Do NOT commit, push, or create PRs.`;
+        } else if (i < iterations - 1) {
+          prompt = `Continue working on the task: ${title}. This is iteration ${i + 1} of ${iterations}. Review changes so far, improve quality, run tests if available, fix issues. You have ${iterations - i - 1} more iteration(s) after this — use them to refine and polish. Only respond with 'TASK_COMPLETE' if there is truly nothing left to improve. Do NOT commit, push, or create PRs.`;
         } else {
-          prompt = `Continue working on the task: ${title}. Review changes so far, run tests if available, fix issues. When the task is fully complete and tests pass, respond with exactly 'TASK_COMPLETE' on its own line. Do NOT commit, push, or create PRs.`;
+          prompt = `Final iteration (${i + 1} of ${iterations}) for task: ${title}. Do a final review pass — check quality, fix any remaining issues, run tests. When satisfied, respond with 'TASK_COMPLETE' on its own line. Do NOT commit, push, or create PRs.`;
         }
 
         log('info', `Claude iteration ${i + 1}/${iterations}`, { runTaskId, mode });
@@ -756,13 +758,21 @@ function handleWatchEvent(event, projectName, channel, project) {
   const title = event.title || 'Untitled';
   log('info', 'Watch: new task detected', { taskId, title, channel, projectName });
 
-  // Determine attempts count
+  // Determine attempts count and mode override from payload
   let attempts = project.default_attempts || 1;
+  let modeOverrideFromPayload = null;
   if (event.payload) {
     try {
       const payload = typeof event.payload === 'string' ? JSON.parse(event.payload) : event.payload;
       if (payload.attempts && Number.isInteger(payload.attempts) && payload.attempts > 0) {
         attempts = payload.attempts;
+      }
+      if (payload.iterations || payload.mode) {
+        const mode = payload.mode || 'iterative';
+        const iterations = payload.iterations ? parseInt(payload.iterations, 10) : undefined;
+        if ((mode === 'oneshot' || mode === 'iterative') && (!iterations || iterations > 0)) {
+          modeOverrideFromPayload = { mode, iterations };
+        }
       }
     } catch {}
   }
@@ -787,7 +797,7 @@ function handleWatchEvent(event, projectName, channel, project) {
     project,
     projectName,
     attempts,
-    modeOverride: null,
+    modeOverride: modeOverrideFromPayload,
   });
 
   // Trigger queue processing
