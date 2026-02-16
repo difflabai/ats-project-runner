@@ -503,8 +503,10 @@ async function runAllAttempts(task, project, projectName, attempts, modeOverride
 }
 
 // === Preflight ===
-function preflight() {
-  for (const check of [{ name: 'ats', bin: ATS_BIN }, { name: 'claude', bin: CLAUDE_BIN }]) {
+function preflight({ skipClaude = false } = {}) {
+  const checks = [{ name: 'ats', bin: ATS_BIN }];
+  if (!skipClaude) checks.push({ name: 'claude', bin: CLAUDE_BIN });
+  for (const check of checks) {
     try {
       const version = execSync(`'${check.bin}' --version`, {
         encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'],
@@ -883,9 +885,9 @@ function statusCommand() {
         const taskMatches = raw.match(/\{[\s\S]*?\}/g);
         pendingCount = taskMatches ? String(taskMatches.length) : '0';
       }
-    } catch {
-      // ats list may return non-zero if no tasks — treat as 0
-      pendingCount = '0';
+    } catch (err) {
+      log('warn', 'Failed to query pending tasks', { project: name, channel: proj.channel, error: err.message });
+      pendingCount = 'ERR';
     }
 
     console.log(
@@ -982,7 +984,7 @@ async function main() {
     projects: Object.keys(PROJECTS),
   });
 
-  preflight();
+  preflight({ skipClaude: dryRun });
 
   // Fetch the original task (read-only)
   let task;
