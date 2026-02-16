@@ -33,6 +33,21 @@ const ACTOR_FLAGS = ['--actor-type', 'agent', '--actor-id', 'ats-project-runner'
 const ONESHOT_KEYWORDS = ['fix typo', 'update version', 'rename', 'bump', 'typo', 'version bump'];
 const ITERATIVE_KEYWORDS = ['add', 'implement', 'refactor', 'debug', 'investigate', 'build', 'create', 'feature'];
 
+// === Error codes ===
+const ERR_TASK_NOT_FOUND = 'ERR_TASK_NOT_FOUND';
+const ERR_CLAIM_FAILED = 'ERR_CLAIM_FAILED';
+const ERR_CLAUDE_TIMEOUT = 'ERR_CLAUDE_TIMEOUT';
+const ERR_GIT_FAILED = 'ERR_GIT_FAILED';
+const ERR_PR_FAILED = 'ERR_PR_FAILED';
+
+class ProjectRunnerError extends Error {
+  constructor(message, code) {
+    super(message);
+    this.name = 'ProjectRunnerError';
+    this.code = code;
+  }
+}
+
 let running = true;
 let currentChild = null; // active Claude child process
 let processing = false; // true while a task is being processed (watch mode)
@@ -211,9 +226,9 @@ function runClaude(prompt, repoPath) {
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       if (signal === 'SIGTERM' || code === 143) {
-        reject(new Error('Claude timed out or was cancelled'));
+        reject(new ProjectRunnerError('Claude timed out or was cancelled', ERR_CLAUDE_TIMEOUT));
       } else if (code !== 0) {
-        reject(new Error(`Claude exited with code ${code}`));
+        reject(new ProjectRunnerError(`Claude exited with code ${code}`, ERR_CLAUDE_TIMEOUT));
       } else {
         resolve(stdout);
       }
@@ -280,8 +295,9 @@ async function processTask(task, project, projectName, runNumber, modeOverride, 
     claimTask(runTaskId);
     postMessage(runTaskId, `Processing original task #${origTaskId}: ${title}`);
   } catch (err) {
-    log('error', 'Failed to claim run task', { runTaskId, error: err.message });
-    return { success: false, error: err.message, run_number: runNumber };
+    const claimErr = new ProjectRunnerError(`Failed to claim run task: ${err.message}`, ERR_CLAIM_FAILED);
+    log('error', 'Failed to claim run task', { runTaskId, code: claimErr.code, error: claimErr.message });
+    return { success: false, error: claimErr.message, code: ERR_CLAIM_FAILED, run_number: runNumber };
   }
 
   // 3. Lease renewal heartbeat (only on the run task)
@@ -308,12 +324,20 @@ async function processTask(task, project, projectName, runNumber, modeOverride, 
       catch { try { git(repoPath, 'rev-parse', '--verify', 'origin/master'); defaultBranch = 'master'; } catch {} }
     }
 
-    git(repoPath, 'checkout', defaultBranch);
-    git(repoPath, 'pull', '--ff-only');
+    try {
+      git(repoPath, 'checkout', defaultBranch);
+      git(repoPath, 'pull', '--ff-only');
+    } catch (err) {
+      throw new ProjectRunnerError(`Git setup failed: ${err.message}`, ERR_GIT_FAILED);
+    }
 
     const branchSuffix = runNumber > 1 ? `-run${runNumber}` : '';
     const branchName = `task/${origTaskId}-${slugify(title)}${branchSuffix}`;
-    git(repoPath, 'checkout', '-b', branchName);
+    try {
+      git(repoPath, 'checkout', '-b', branchName);
+    } catch (err) {
+      throw new ProjectRunnerError(`Failed to create branch ${branchName}: ${err.message}`, ERR_GIT_FAILED);
+    }
     log('info', 'Created branch', { branchName });
     postMessage(runTaskId, `Created branch: ${branchName}`);
 
@@ -390,14 +414,21 @@ async function processTask(task, project, projectName, runNumber, modeOverride, 
     let prUrl = null;
     if (hasChanges(repoPath)) {
       postMessage(runTaskId, 'Committing changes');
-      git(repoPath, 'add', '-A');
-
-      const commitMsg = `task/${origTaskId}: ${title}`;
-      git(repoPath, 'commit', '-m', commitMsg);
+      try {
+        git(repoPath, 'add', '-A');
+        const commitMsg = `task/${origTaskId}: ${title}`;
+        git(repoPath, 'commit', '-m', commitMsg);
+      } catch (err) {
+        throw new ProjectRunnerError(`Git commit failed: ${err.message}`, ERR_GIT_FAILED);
+      }
       log('info', 'Committed changes', { runTaskId, branchName });
 
       postMessage(runTaskId, 'Pushing branch');
-      git(repoPath, 'push', '-u', 'origin', branchName);
+      try {
+        git(repoPath, 'push', '-u', 'origin', branchName);
+      } catch (err) {
+        throw new ProjectRunnerError(`Git push failed: ${err.message}`, ERR_GIT_FAILED);
+      }
       log('info', 'Pushed branch', { runTaskId, branchName });
 
       postMessage(runTaskId, 'Creating pull request');
@@ -420,8 +451,9 @@ async function processTask(task, project, projectName, runNumber, modeOverride, 
         log('info', 'PR created', { runTaskId, prUrl });
         postMessage(runTaskId, `PR created: ${prUrl}`);
       } catch (err) {
-        log('error', 'Failed to create PR', { runTaskId, error: err.message, stderr: err.stderr });
-        postMessage(runTaskId, `PR creation failed: ${err.message}`);
+        const prErr = new ProjectRunnerError(`PR creation failed: ${err.message}`, ERR_PR_FAILED);
+        log('error', 'Failed to create PR', { runTaskId, code: prErr.code, error: prErr.message, stderr: err.stderr });
+        postMessage(runTaskId, `[${ERR_PR_FAILED}] ${prErr.message}`);
       }
     } else {
       log('info', 'No changes to commit', { runTaskId });
@@ -453,16 +485,17 @@ async function processTask(task, project, projectName, runNumber, modeOverride, 
     return { success: true, runTaskId, prUrl, branch: branchName, outputs, run_number: runNumber, summary };
 
   } catch (err) {
-    log('error', 'Task processing failed', { runTaskId, error: err.message });
-    postMessage(runTaskId, `Failed: ${err.message}`);
+    const errorCode = err.code || 'ERR_UNKNOWN';
+    log('error', 'Task processing failed', { runTaskId, code: errorCode, error: err.message });
+    postMessage(runTaskId, `Failed [${errorCode}]: ${err.message}`);
 
-    try { failTask(runTaskId, err.message); } catch {}
-    telegram(`\u274C <b>Failed</b> on <b>${projectName}</b> (run-${runNumber})\nTask: ${title} (#${origTaskId})\n${err.message.slice(0, 200)}`);
+    try { failTask(runTaskId, `[${errorCode}] ${err.message}`); } catch {}
+    telegram(`\u274C <b>Failed</b> on <b>${projectName}</b> (run-${runNumber})\nTask: ${title} (#${origTaskId})\n[${errorCode}] ${err.message.slice(0, 200)}`);
 
     // Clean up: try to get back to default branch
     try { git(repoPath, 'checkout', '-'); } catch {}
 
-    return { success: false, runTaskId, error: err.message, run_number: runNumber };
+    return { success: false, runTaskId, error: err.message, code: errorCode, run_number: runNumber };
   } finally {
     clearInterval(renewInterval);
   }
@@ -772,11 +805,11 @@ function handleWatchEvent(event, projectName, channel, project) {
   try {
     fullTask = getTask(taskId);
   } catch (err) {
-    log('error', 'Failed to fetch task details', { taskId, error: err.message });
+    log('error', 'Failed to fetch task details', { taskId, code: ERR_TASK_NOT_FOUND, error: err.message });
     return;
   }
   if (!fullTask) {
-    log('error', 'Task not found when fetching details', { taskId });
+    log('error', 'Task not found when fetching details', { taskId, code: ERR_TASK_NOT_FOUND });
     return;
   }
 
@@ -880,11 +913,11 @@ async function main() {
   try {
     task = getTask(taskId);
   } catch (err) {
-    log('error', 'Failed to fetch task', { taskId, error: err.message });
+    log('error', 'Failed to fetch task', { taskId, code: ERR_TASK_NOT_FOUND, error: err.message });
     process.exit(1);
   }
   if (!task) {
-    log('error', 'Task not found', { taskId });
+    log('error', 'Task not found', { taskId, code: ERR_TASK_NOT_FOUND });
     process.exit(1);
   }
 
