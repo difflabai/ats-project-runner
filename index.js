@@ -39,6 +39,8 @@ const ERR_CLAIM_FAILED = 'ERR_CLAIM_FAILED';
 const ERR_CLAUDE_TIMEOUT = 'ERR_CLAUDE_TIMEOUT';
 const ERR_GIT_FAILED = 'ERR_GIT_FAILED';
 const ERR_PR_FAILED = 'ERR_PR_FAILED';
+const ERR_UNKNOWN = 'ERR_UNKNOWN';
+const KNOWN_ERROR_CODES = new Set([ERR_TASK_NOT_FOUND, ERR_CLAIM_FAILED, ERR_CLAUDE_TIMEOUT, ERR_GIT_FAILED, ERR_PR_FAILED, ERR_UNKNOWN]);
 
 class ProjectRunnerError extends Error {
   constructor(message, code) {
@@ -485,7 +487,7 @@ async function processTask(task, project, projectName, runNumber, modeOverride, 
     return { success: true, runTaskId, prUrl, branch: branchName, outputs, run_number: runNumber, summary };
 
   } catch (err) {
-    const errorCode = err.code || 'ERR_UNKNOWN';
+    const errorCode = (err.code && KNOWN_ERROR_CODES.has(err.code)) ? err.code : ERR_UNKNOWN;
     log('error', 'Task processing failed', { runTaskId, code: errorCode, error: err.message });
     postMessage(runTaskId, `Failed [${errorCode}]: ${err.message}`);
 
