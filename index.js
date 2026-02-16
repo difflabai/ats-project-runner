@@ -909,9 +909,7 @@ async function main() {
   }
 }
 
-try {
-  main();
-} catch (err) {
+main().catch(err => {
   log('error', 'Fatal error', { error: err.message });
   process.exit(1);
-}
+});
