@@ -5,21 +5,24 @@
       "repo": "/home/openclaw/projects/nanobazaar-song-seller-dev",
       "github": "difflabai/nanobazaar-song-seller",
       "default_mode": "auto",
-      "max_iterations": 15
+      "max_iterations": 15,
+      "default_attempts": 1
     },
     "ada-dispatch": {
       "channel": "ats-dispatch",
       "repo": "/home/openclaw/projects/ada-dispatch",
       "github": "difflabai/ada-dispatch",
       "default_mode": "auto",
-      "max_iterations": 12
+      "max_iterations": 12,
+      "default_attempts": 1
     },
     "song-creator": {
       "channel": "song-creator-dev",
       "repo": "/home/openclaw/projects/song-creator-ats",
       "github": "difflabai/ats-song-creator",
       "default_mode": "auto",
-      "max_iterations": 10
+      "max_iterations": 10,
+      "default_attempts": 1
     }
   },
   "claude_bin": "/usr/bin/claude",
