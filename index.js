@@ -871,6 +871,7 @@ function statusCommand() {
   );
   console.log(`  ${separator}`);
 
+  let hasErrors = false;
   for (const [name, proj] of projects) {
     let pendingCount = '?';
     try {
@@ -888,6 +889,7 @@ function statusCommand() {
     } catch (err) {
       log('warn', 'Failed to query pending tasks', { project: name, channel: proj.channel, error: err.message });
       pendingCount = 'ERR';
+      hasErrors = true;
     }
 
     console.log(
@@ -895,6 +897,10 @@ function statusCommand() {
     );
   }
   console.log();
+  if (hasErrors) {
+    console.error('Warning: one or more channels could not be queried (see ERR above).');
+    process.exit(1);
+  }
 }
 
 // === CLI ===
