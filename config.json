@@ -1,0 +1,31 @@
+{
+  "projects": {
+    "nanobazaar-seller": {
+      "channel": "nanobazaar-seller",
+      "repo": "/home/openclaw/projects/nanobazaar-song-seller-dev",
+      "github": "difflabai/nanobazaar-song-seller",
+      "default_mode": "auto",
+      "max_iterations": 15
+    },
+    "ada-dispatch": {
+      "channel": "ats-dispatch",
+      "repo": "/home/openclaw/projects/ada-dispatch",
+      "github": "difflabai/ada-dispatch",
+      "default_mode": "auto",
+      "max_iterations": 12
+    },
+    "song-creator": {
+      "channel": "song-creator-dev",
+      "repo": "/home/openclaw/projects/song-creator-ats",
+      "github": "difflabai/ats-song-creator",
+      "default_mode": "auto",
+      "max_iterations": 10
+    }
+  },
+  "claude_bin": "/usr/bin/claude",
+  "ats_bin": "/usr/bin/ats",
+  "telegram_chat_id": "6644666619",
+  "telegram_token": "8516158841:AAEiuEc956VdL0i6NIRqJ8o606ZYGV4AmDU",
+  "lease_ms": 7200000,
+  "claude_timeout_ms": 3600000
+}

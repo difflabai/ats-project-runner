@@ -1,0 +1,10 @@
+{
+  "name": "ats-project-runner",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "ATS multi-project task runner — watches channels, runs Claude Code, opens PRs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  }
+}
