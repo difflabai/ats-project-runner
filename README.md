@@ -138,6 +138,20 @@ Sends notifications for:
 - PR opened (each run)
 - Failures (each run)
 
+## Error Codes
+
+When a task fails, the failure reason includes a structured error code in brackets (e.g. `[ERR_GIT_FAILED] Git setup failed: ...`). These codes appear in ATS task failure reasons, log output, and Telegram notifications.
+
+| Code | Meaning |
+|------|---------|
+| `ERR_TASK_NOT_FOUND` | Could not fetch or find the task in ATS |
+| `ERR_CLAIM_FAILED` | Failed to claim the run task lease |
+| `ERR_CLAUDE_TIMEOUT` | Claude Code timed out or exited with a non-zero code |
+| `ERR_GIT_FAILED` | Git operation failed (checkout, pull, branch creation, push) |
+| `ERR_PR_FAILED` | `gh pr create` failed |
+
+Errors that don't match a known code are reported as `ERR_UNKNOWN`.
+
 ## Original Task Policy
 
 The runner **never** claims, completes, fails, or modifies the original task. It is treated as a read-only trigger/reference. All state management happens on the suffixed copy tasks.
