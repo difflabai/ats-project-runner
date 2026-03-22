@@ -31,6 +31,14 @@
       "default_mode": "auto",
       "max_iterations": 12,
       "default_attempts": 1
+    },
+    "ats-cli": {
+      "channel": "ats-cli",
+      "repo": "/home/openclaw/projects/ats-cli",
+      "github": "difflabai/ats-skill",
+      "default_mode": "auto",
+      "max_iterations": 10,
+      "default_attempts": 1
     }
   },
   "claude_bin": "/usr/bin/claude",

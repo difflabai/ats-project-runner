@@ -7,6 +7,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
+import { parseJsonObjects, parseHumanReadable, trimBuffer } from './lib/watch-parser.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VERSION = '3.0.0';
@@ -591,46 +592,23 @@ async function watchMode() {
       buffer += chunk.toString();
 
       // Try to extract JSON objects from the buffer
-      // The ats watch output interleaves JSON objects with human-readable lines
-      let startIdx;
-      while ((startIdx = buffer.indexOf('{')) !== -1) {
-        // Find the matching closing brace
-        let depth = 0;
-        let endIdx = -1;
-        for (let i = startIdx; i < buffer.length; i++) {
-          if (buffer[i] === '{') depth++;
-          else if (buffer[i] === '}') {
-            depth--;
-            if (depth === 0) {
-              endIdx = i;
-              break;
-            }
-          }
-        }
+      const jsonResult = parseJsonObjects(buffer);
+      for (const event of jsonResult.events) {
+        handleWatchEvent(event, name, channel, project);
+      }
+      buffer = jsonResult.remaining;
 
-        if (endIdx === -1) break; // incomplete JSON, wait for more data
-
-        const jsonStr = buffer.slice(startIdx, endIdx + 1);
-        buffer = buffer.slice(endIdx + 1);
-
-        try {
-          const event = JSON.parse(jsonStr);
+      // Fallback: parse human-readable format if no JSON was found
+      if (jsonResult.events.length === 0) {
+        const textResult = parseHumanReadable(buffer);
+        for (const event of textResult.events) {
+          log('info', 'Fallback text parser matched task', { channel, taskId: event.task_id });
           handleWatchEvent(event, name, channel, project);
-        } catch {
-          // Not valid JSON, skip
-          log('debug', 'Failed to parse watch JSON', { channel, json: jsonStr.slice(0, 200) });
         }
+        buffer = textResult.remaining;
       }
 
-      // If buffer gets too large without valid JSON, trim non-JSON prefix
-      if (buffer.length > 10000) {
-        const lastBrace = buffer.lastIndexOf('{');
-        if (lastBrace > 0) {
-          buffer = buffer.slice(lastBrace);
-        } else {
-          buffer = '';
-        }
-      }
+      buffer = trimBuffer(buffer);
     });
 
     watcher.stderr.on('data', (chunk) => {
@@ -670,31 +648,23 @@ async function watchMode() {
 
     watcher.stdout.on('data', (chunk) => {
       buffer += chunk.toString();
-      let startIdx;
-      while ((startIdx = buffer.indexOf('{')) !== -1) {
-        let depth = 0;
-        let endIdx = -1;
-        for (let i = startIdx; i < buffer.length; i++) {
-          if (buffer[i] === '{') depth++;
-          else if (buffer[i] === '}') {
-            depth--;
-            if (depth === 0) { endIdx = i; break; }
-          }
-        }
-        if (endIdx === -1) break;
-        const jsonStr = buffer.slice(startIdx, endIdx + 1);
-        buffer = buffer.slice(endIdx + 1);
-        try {
-          const event = JSON.parse(jsonStr);
+
+      const jsonResult = parseJsonObjects(buffer);
+      for (const event of jsonResult.events) {
+        handleWatchEvent(event, name, channel, project);
+      }
+      buffer = jsonResult.remaining;
+
+      if (jsonResult.events.length === 0) {
+        const textResult = parseHumanReadable(buffer);
+        for (const event of textResult.events) {
+          log('info', 'Fallback text parser matched task', { channel, taskId: event.task_id });
           handleWatchEvent(event, name, channel, project);
-        } catch {
-          log('debug', 'Failed to parse watch JSON', { channel, json: jsonStr.slice(0, 200) });
         }
+        buffer = textResult.remaining;
       }
-      if (buffer.length > 10000) {
-        const lastBrace = buffer.lastIndexOf('{');
-        buffer = lastBrace > 0 ? buffer.slice(lastBrace) : '';
-      }
+
+      buffer = trimBuffer(buffer);
     });
 
     watcher.stderr.on('data', () => {});
@@ -734,7 +704,7 @@ async function watchMode() {
 
 // === Handle a watch event ===
 function handleWatchEvent(event, projectName, channel, project) {
-  const taskId = event.id || event.uuid;
+  const taskId = event.task_id || event.id || event.uuid;
   if (!taskId) return;
 
   // Skip if already seen
