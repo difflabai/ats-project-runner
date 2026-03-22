@@ -990,8 +990,39 @@ async function main() {
     projects: Object.keys(PROJECTS),
   });
 
-  // Dry-run skips Claude preflight (only validates ATS connectivity)
-  preflight({ skipClaude: dryRun });
+  // Dry-run mode: only validate ATS connectivity, fetch task, and preview
+  if (dryRun) {
+    preflight({ skipClaude: true });
+
+    let task;
+    try {
+      task = getTask(taskId);
+    } catch (err) {
+      log('error', 'Failed to fetch task', { taskId, error: err.message });
+      process.exit(1);
+    }
+    if (!task) {
+      log('error', 'Task not found', { taskId });
+      process.exit(1);
+    }
+
+    log('info', 'Fetched original task', { taskId, title: task.title, channel: task.channel, status: task.status });
+
+    const match = findProjectByChannel(task.channel);
+    if (!match) {
+      log('error', 'Task channel not found in config', { taskId, channel: task.channel, configured: Object.values(PROJECTS).map(p => p.channel) });
+      process.exit(1);
+    }
+
+    const { name: projectName, project } = match;
+    log('info', 'Matched project', { projectName, repo: project.repo, github: project.github });
+
+    dryRunPreview(task, project, projectName, attempts, modeOverride);
+    return;
+  }
+
+  // Full preflight (includes Claude binary validation)
+  preflight();
 
   // Fetch the original task (read-only)
   let task;
@@ -1017,12 +1048,6 @@ async function main() {
 
   const { name: projectName, project } = match;
   log('info', 'Matched project', { projectName, repo: project.repo, github: project.github });
-
-  // Dry-run mode: preview what would happen without executing
-  if (dryRun) {
-    dryRunPreview(task, project, projectName, attempts, modeOverride);
-    return;
-  }
 
   // Run all attempts
   const results = await runAllAttempts(task, project, projectName, attempts, modeOverride);
