@@ -503,8 +503,10 @@ async function runAllAttempts(task, project, projectName, attempts, modeOverride
 }
 
 // === Preflight ===
-function preflight() {
-  for (const check of [{ name: 'ats', bin: ATS_BIN }, { name: 'claude', bin: CLAUDE_BIN }]) {
+function preflight({ skipClaude = false } = {}) {
+  const checks = [{ name: 'ats', bin: ATS_BIN }];
+  if (!skipClaude) checks.push({ name: 'claude', bin: CLAUDE_BIN });
+  for (const check of checks) {
     try {
       const version = execSync(`'${check.bin}' --version`, {
         encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'],
@@ -796,6 +798,111 @@ function handleWatchEvent(event, projectName, channel, project) {
   });
 }
 
+// === Dry-run preview ===
+function dryRunPreview(task, project, projectName, attempts, modeOverride) {
+  const origTaskId = task.id || task.uuid;
+  const title = task.title || 'Untitled';
+  const description = task.description || '';
+
+  // Detect mode
+  let mode, iterations;
+  if (modeOverride) {
+    mode = modeOverride.mode;
+    iterations = modeOverride.iterations || (mode === 'oneshot' ? 1 : 8);
+    iterations = Math.min(iterations, project.max_iterations || 15);
+  } else {
+    ({ mode, iterations } = detectMode(title, description, project));
+  }
+
+  // Build branch name
+  const branchName = `task/${origTaskId}-${slugify(title)}`;
+
+  // Build first-iteration prompt
+  const prompt = `You are working on the project at ${project.repo}. Execute this task:\n\n${title}\n${description}\n\nMake progress on this task. Do NOT commit, push, or create PRs.`;
+
+  const separator = '─'.repeat(60);
+
+  console.log(`\n${separator}`);
+  console.log(`  DRY RUN — nothing will be executed`);
+  console.log(separator);
+  console.log(`  Project:      ${projectName}`);
+  console.log(`  Channel:      ${project.channel}`);
+  console.log(`  Repo:         ${project.repo}`);
+  console.log(`  GitHub:       ${project.github}`);
+  console.log(`  Task ID:      ${origTaskId}`);
+  console.log(`  Title:        ${title}`);
+  console.log(`  Mode:         ${mode}${modeOverride ? ' (override)' : ' (auto-detected)'}`);
+  console.log(`  Iterations:   ${iterations}`);
+  console.log(`  Attempts:     ${attempts}`);
+  console.log(`  Branch:       ${branchName}`);
+  if (attempts > 1) {
+    console.log(`  Run branches: ${branchName}, ${branchName}-run2`);
+    if (attempts > 2) console.log(`                ... through ${branchName}-run${attempts}`);
+  }
+  console.log(separator);
+  console.log(`  Claude prompt preview (first 500 chars):`);
+  console.log();
+  console.log(`  ${prompt.slice(0, 500).split('\n').join('\n  ')}`);
+  if (prompt.length > 500) console.log(`  ... (${prompt.length - 500} more chars)`);
+  console.log(`\n${separator}`);
+  console.log(`  Would create: ATS run task on channel "${project.channel}:run-1"`);
+  console.log(`  Would run:    Claude Code (${mode}, up to ${iterations} iteration${iterations > 1 ? 's' : ''})`);
+  console.log(`  Would open:   PR on ${project.github} from ${branchName}`);
+  console.log(separator + '\n');
+}
+
+// === Status command ===
+function statusCommand() {
+  const projects = Object.entries(PROJECTS);
+
+  if (projects.length === 0) {
+    console.log('No projects configured.');
+    return;
+  }
+
+  // Table header
+  const col = { name: 20, channel: 22, repo: 45, github: 35, pending: 9 };
+  const pad = (s, w) => String(s).padEnd(w).slice(0, w);
+  const separator = '─'.repeat(col.name + col.channel + col.repo + col.github + col.pending + 8);
+
+  console.log(`\nats-project-runner v${VERSION} — Project Status\n`);
+  console.log(
+    `  ${pad('Project', col.name)}  ${pad('Channel', col.channel)}  ${pad('Repo Path', col.repo)}  ${pad('GitHub', col.github)}  ${pad('Pending', col.pending)}`
+  );
+  console.log(`  ${separator}`);
+
+  let hasErrors = false;
+  for (const [name, proj] of projects) {
+    let pendingCount = '?';
+    try {
+      const raw = ats('list', '--channel', proj.channel, '--status', 'pending', '-f', 'json');
+      // Try to parse as JSON array or count objects
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (match) {
+        const tasks = JSON.parse(match[0]);
+        pendingCount = String(tasks.length);
+      } else {
+        // Count individual task JSON objects
+        const taskMatches = raw.match(/\{[\s\S]*?\}/g);
+        pendingCount = taskMatches ? String(taskMatches.length) : '0';
+      }
+    } catch (err) {
+      log('warn', 'Failed to query pending tasks', { project: name, channel: proj.channel, error: err.message });
+      pendingCount = 'ERR';
+      hasErrors = true;
+    }
+
+    console.log(
+      `  ${pad(name, col.name)}  ${pad(proj.channel, col.channel)}  ${pad(proj.repo, col.repo)}  ${pad(proj.github, col.github)}  ${pad(pendingCount, col.pending)}`
+    );
+  }
+  console.log();
+  if (hasErrors) {
+    console.error('Warning: one or more channels could not be queried (see ERR above).');
+    process.exit(1);
+  }
+}
+
 // === CLI ===
 function usage() {
   console.error(`Usage:
@@ -804,7 +911,9 @@ function usage() {
   node index.js run <task-id> --mode oneshot       Force one-shot mode
   node index.js run <task-id> --mode iterative     Force iterative mode
   node index.js run <task-id> --iterations 12      Set max iterations (implies iterative)
+  node index.js run <task-id> --dry-run            Preview what would happen without executing
   node index.js watch                              Watch all configured channels for new tasks
+  node index.js status                             Show all projects and pending task counts
 `);
   process.exit(1);
 }
@@ -817,6 +926,11 @@ async function main() {
 
   if (command === 'watch') {
     await watchMode();
+    return;
+  }
+
+  if (command === 'status') {
+    statusCommand();
     return;
   }
 
@@ -840,9 +954,12 @@ async function main() {
       attempts: { type: 'string', short: 'a' },
       mode: { type: 'string', short: 'm' },
       iterations: { type: 'string', short: 'i' },
+      'dry-run': { type: 'boolean' },
     },
     strict: false,
   });
+
+  const dryRun = values['dry-run'] || false;
 
   if (values.attempts) {
     attempts = parseInt(values.attempts, 10);
@@ -873,6 +990,38 @@ async function main() {
     projects: Object.keys(PROJECTS),
   });
 
+  // Dry-run mode: only validate ATS connectivity, fetch task, and preview
+  if (dryRun) {
+    preflight({ skipClaude: true });
+
+    let task;
+    try {
+      task = getTask(taskId);
+    } catch (err) {
+      log('error', 'Failed to fetch task', { taskId, error: err.message });
+      process.exit(1);
+    }
+    if (!task) {
+      log('error', 'Task not found', { taskId });
+      process.exit(1);
+    }
+
+    log('info', 'Fetched original task', { taskId, title: task.title, channel: task.channel, status: task.status });
+
+    const match = findProjectByChannel(task.channel);
+    if (!match) {
+      log('error', 'Task channel not found in config', { taskId, channel: task.channel, configured: Object.values(PROJECTS).map(p => p.channel) });
+      process.exit(1);
+    }
+
+    const { name: projectName, project } = match;
+    log('info', 'Matched project', { projectName, repo: project.repo, github: project.github });
+
+    dryRunPreview(task, project, projectName, attempts, modeOverride);
+    return;
+  }
+
+  // Full preflight (includes Claude binary validation)
   preflight();
 
   // Fetch the original task (read-only)
